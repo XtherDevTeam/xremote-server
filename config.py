@@ -1,0 +1,1 @@
+CONNECT_TOKEN = "YoimiyaIsMyWaifu20081209"
