@@ -8,6 +8,7 @@ flask==3.0.3
 Flask-Cors==4.0.1
 Flask-SocketIO==5.3.6
 gevent==24.2.1
+eventlet
 gevent-websocket==0.10.1
 greenlet==3.0.3
 h11==0.14.0
@@ -20,7 +21,6 @@ pycrontab==0.1.2
 python-engineio==4.9.1
 python-socketio==5.11.3
 PyYAML==5.1.1
-simple-websocket==1.0.0
 werkzeug==3.0.3
 wsproto==1.2.0
 zipp==3.19.2
