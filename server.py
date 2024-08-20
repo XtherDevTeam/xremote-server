@@ -54,7 +54,8 @@ def update_guest_state(token: str = "", sid: str = "", guest_width: int = 0, gue
             'guest': {
                 'width': guest_width,
                 'height': guest_height,
-            }
+            },
+            "timestamp": int(time.time() * 1000)
         }
     }
 
@@ -62,7 +63,7 @@ def update_guest_state(token: str = "", sid: str = "", guest_width: int = 0, gue
 frame_count = 0
 last_full_frame_timestamp = time.time()
 last_frame = None
-
+compensation_ratio = 1.0
 
 
 def worker_thread():
@@ -89,12 +90,14 @@ def worker_thread():
             if time.time() - last_full_frame_timestamp > 2 or last_frame is None:
                 
                 if last_frame is not None:
-                    print("Current frame rate: ", frame_count / (time.time() - last_full_frame_timestamp))
+                    print("Current frame rate: ", frame_count / (time.time() - last_full_frame_timestamp), "| Compensation", compensation_ratio == 0)
                     frame_count = 0
                     last_full_frame_timestamp = time.time()
                 
-            compressed_frame = cv2.imencode('.jpeg', screenshot)[1].tobytes()
-            socket.emit("frame_update_full", struct.pack("<qq", int(time.time() * 1000), len(compressed_frame)) + compressed_frame, namespace='/', to=GUEST['sid'])
+            if compensation_ratio == 1.0 or frame_count % 3 == 0:
+                compressed_frame = cv2.imencode('.jpeg', screenshot)[1].tobytes()
+                socket.emit("frame_update_full", struct.pack("<qq", int(time.time() * 1000 - GUEST['connection_status']['timestamp']), len(compressed_frame)) + compressed_frame, namespace='/', to=GUEST['sid'])
+                
             last_frame = screenshot
     
     tools.initialize_scrcpy(on_frame)
@@ -162,12 +165,13 @@ def handshake(data):
             host_width=host_resol[0],
             host_height=host_resol[1],
         )
-        print('Negotiation result', GUEST['connection_status'])
+        # print('Negotiation result', GUEST['connection_status'])
         socket.emit("connected", {"connection_status": GUEST['connection_status']},
                     namespace='/', to=flask.session['sid'])
     else:
         socket.emit("error", {"message": "Invalid second-step token."},
                     namespace='/', to=flask.session['sid'])
+    
 
 
 @socket.on("destroy", namespace='/')
@@ -184,11 +188,19 @@ def destory(data):
 def revert_touch_event_rotation(message: dict):
     if tools.is_screen_in_rotation():
         # swap x and y
-        print("Screen is in rotation")
+        # print("Screen is in rotation")
         message['touch_x'], message['touch_y'] = message['touch_y'], message['touch_x']
         # message['touch_x'] = GUEST['connection_status']['guest']['height'] - message['touch_x']
         # message['touch_y'] = GUEST['connection_status']['guest']['width'] - message['touch_y']
     return message
+
+
+@socket.on("set_compensation_ratio", namespace='/')
+def setCompensationRatio(message):
+    print("Set compensation ratio", message)
+    message = json.loads(message)
+    global compensation_ratio
+    compensation_ratio = message['ratio']
 
 
 @socket.on("input_event", namespace='/')
@@ -207,19 +219,16 @@ def send(message):
         match message['type']:
             case 'touch_down':
                 message = revert_touch_event_rotation(message)
-                print("Touch x, y: ", message['touch_x'], message['touch_y'])
                 x = int(message['touch_x'] * compress_ratio)
                 y = int(message['touch_y'] * compress_ratio)
                 tools.emit_touch_event(x, y, tools.scrcpy.const.ACTION_DOWN, message['touch_id'])
             case 'touch_up':
                 message = revert_touch_event_rotation(message)
-                print("Touch x, y: ", message['touch_x'], message['touch_y'])
                 x = int(message['touch_x'] * compress_ratio)
                 y = int(message['touch_y'] * compress_ratio)
                 tools.emit_touch_event(x, y, tools.scrcpy.const.ACTION_UP, message['touch_id'])
             case 'touch_move':
                 message = revert_touch_event_rotation(message)
-                print("Touch x, y: ", message['touch_x'], message['touch_y'])
                 x = int(message['touch_x'] * compress_ratio)
                 y = int(message['touch_y'] * compress_ratio)
                 tools.emit_touch_event(x, y, tools.scrcpy.const.ACTION_MOVE, message['touch_id'])
@@ -253,4 +262,4 @@ def root():
 
 if __name__ == '__main__':
     th = socket.start_background_task(target=worker_thread)
-    socket.run(app, host='0.0.0.0', port=5013, debug=True)
+    socket.run(app, host='0.0.0.0', port=5013, debug=False)

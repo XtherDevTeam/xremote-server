@@ -113,7 +113,7 @@ def initialize_scrcpy(on_frame_cb) -> None:
     print(adbutils.adb.device_list())
     
     global scrcpyCli
-    scrcpyCli = scrcpy.Client(max_fps=120, stay_awake=True, encoder_name=config.ENCODER)
+    scrcpyCli = scrcpy.Client(max_fps=30, stay_awake=True, encoder_name=config.ENCODER)
     # screen on if not already on
     if not scrcpyCli.device.is_screen_on():
         scrcpyCli.control.keycode(26, scrcpy.const.ACTION_DOWN)
