@@ -73,32 +73,9 @@ def calculate_binary_diff(img1: numpy.ndarray, img2: numpy.ndarray) -> bytes:
         bytes: The binary difference between the two images.
     """
 
-    b1 = cv2.imencode('.png', img1)[1].tobytes()
-    b2 = cv2.imencode('.png', img2)[1].tobytes()
-
-    # Use numpy for faster comparison and array manipulation
-    diff_indices = numpy.where(numpy.frombuffer(b1, dtype=numpy.uint8) != numpy.frombuffer(b2, dtype=numpy.uint8))[0]
-
-    # Identify consecutive differences
-    diff_ranges = []
-    start = None
-    for i in diff_indices:
-        if start is None:
-            start = i
-        elif i != start + len(diff_ranges[-1]) - diff_ranges[-1][0]:  # Check if consecutive
-            diff_ranges.append((start, i))
-            start = i
-    if start is not None:
-        diff_ranges.append((start, diff_indices[-1] + 1))
-
-    composed_diff = len(diff_ranges).to_bytes(4, byteorder='little')
-    for start, end in diff_ranges:
-        frame_len = end - start
-        composed_diff += start.to_bytes(4, byteorder='little')
-        composed_diff += frame_len.to_bytes(4, byteorder='little')
-        composed_diff += b2[start:end]
-
-    return composed_diff
+    img = img2 - img1
+    # print(img)
+    return cv2.imencode('.jpeg', img)[1].tobytes()
     
 
 

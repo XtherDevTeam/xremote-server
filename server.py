@@ -64,41 +64,75 @@ frame_count = 0
 last_full_frame_timestamp = time.time()
 last_frame = None
 compensation_ratio = 1.0
+error_retry_count = 0
+reference_fps = 30
+reference_frame_size = 0
 
 
+def emit_frame(frame: numpy.ndarray):
+    global GUEST, compensation_ratio, error_retry_count, reference_frame_size
+    if GUEST['sid'] != '':
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 25 if compensation_ratio == 0.0 else 50]
+        compressed_frame = cv2.imencode('.jpeg', frame, encode_param)[1].tobytes()
+        reference_frame_size = len(compressed_frame)
+        socket.emit("frame_update_full", struct.pack("<qq", int(time.time() * 1000 - GUEST['connection_status']['timestamp']), len(compressed_frame)) + compressed_frame, namespace='/', to=GUEST['sid'])
+  
+def is_frame_emittable():
+    global reference_fps, compensation_ratio
+    target = 30
+    if compensation_ratio == 1.0:
+        target = 15
+    else:
+        target = 7
+        
+    if reference_fps > target:
+        return frame_count % (reference_fps // target) == 0
+    else:
+        return True
+        
 def worker_thread():
     print("Worker thread started")
     
     def on_frame(screenshot: numpy.ndarray):
-        global last_frame, frame_count, last_full_frame_timestamp
-        if screenshot is None:
-            return
-        if tools.get_screen_size() == (0, 0):
-            print('Update screen size', screenshot.shape[1], screenshot.shape[0])
-            tools.set_screen_size(screenshot.shape[1], screenshot.shape[0])
-        if not tools.is_screen_in_rotation() and screenshot.shape[1] > screenshot.shape[0]:
-            tools.set_screen_in_rotation(True)
-        elif tools.is_screen_in_rotation() and screenshot.shape[1] < screenshot.shape[0]:
-            tools.set_screen_in_rotation(False)
-        
-        if GUEST['sid'] != '':
-            compress_ratio = GUEST['connection_status']['host']['height'] / GUEST['connection_status']['guest']['height']
-            target_size = (int(GUEST['connection_status']['host']['width'] / compress_ratio), GUEST['connection_status']['guest']['height'])
-            
-            screenshot = tools.compress_screenshot(tools.rotate_if_horizontal(screenshot), target_size)
-            frame_count += 1
-            if time.time() - last_full_frame_timestamp > 2 or last_frame is None:
+        while True:
+            try:
+                global last_frame, frame_count, last_full_frame_timestamp, error_retry_count, reference_fps, reference_frame_size
+                if screenshot is None:
+                    return
+                if tools.get_screen_size() == (0, 0):
+                    print('Update screen size', screenshot.shape[1], screenshot.shape[0])
+                    tools.set_screen_size(screenshot.shape[1], screenshot.shape[0])
+                if not tools.is_screen_in_rotation() and screenshot.shape[1] > screenshot.shape[0]:
+                    tools.set_screen_in_rotation(True)
+                elif tools.is_screen_in_rotation() and screenshot.shape[1] < screenshot.shape[0]:
+                    tools.set_screen_in_rotation(False)
                 
-                if last_frame is not None:
-                    print("Current frame rate: ", frame_count / (time.time() - last_full_frame_timestamp), "| Compensation", compensation_ratio == 0)
-                    frame_count = 0
-                    last_full_frame_timestamp = time.time()
+                if GUEST['sid'] != '':
+                    compress_ratio = GUEST['connection_status']['host']['height'] / GUEST['connection_status']['guest']['height']
+                    target_size = (int(GUEST['connection_status']['host']['width'] / compress_ratio), GUEST['connection_status']['guest']['height'])
+                    
+                    screenshot = tools.compress_screenshot(tools.rotate_if_horizontal(screenshot), target_size)
+                    frame_count += 1
+                    if time.time() - last_full_frame_timestamp > 2 or last_frame is None:
+                        reference_fps = frame_count / (time.time() - last_full_frame_timestamp)
+                        if last_frame is not None:
+                            print("Current frame rate: ", reference_fps, "| Compensation", compensation_ratio == 0, "| Frame size", reference_frame_size)
+                            frame_count = 0
+                            last_full_frame_timestamp = time.time()
+                        
+                    if is_frame_emittable():
+                        emit_frame(screenshot)
+                        
+                    last_frame = screenshot
+                error_retry_count = 0
+                return
+            except Exception as e:
+                error_retry_count += 1
+                time.sleep(0.1)
+                if error_retry_count > 10:
+                    print("Error retry count exceeded. Exiting...")
+                    raise e
                 
-            if compensation_ratio == 1.0 or frame_count % 3 == 0:
-                compressed_frame = cv2.imencode('.jpeg', screenshot)[1].tobytes()
-                socket.emit("frame_update_full", struct.pack("<qq", int(time.time() * 1000 - GUEST['connection_status']['timestamp']), len(compressed_frame)) + compressed_frame, namespace='/', to=GUEST['sid'])
-                
-            last_frame = screenshot
     
     tools.initialize_scrcpy(on_frame)
     
@@ -152,6 +186,7 @@ def handshake(data):
         try:
             guest_width = data['guest_width']
             guest_height = data['guest_height']
+            
         except ValueError:
             socket.emit("error", {"message": "Invalid form"},
                         namespace='/', to=flask.session['sid'])
@@ -187,11 +222,13 @@ def destory(data):
 
 def revert_touch_event_rotation(message: dict):
     if tools.is_screen_in_rotation():
+        compress_ratio = GUEST['connection_status']['host']['height'] / GUEST['connection_status']['guest']['height']
+        target_size = (int(GUEST['connection_status']['host']['width'] / compress_ratio), GUEST['connection_status']['guest']['height'])
         # swap x and y
         # print("Screen is in rotation")
         message['touch_x'], message['touch_y'] = message['touch_y'], message['touch_x']
         # message['touch_x'] = GUEST['connection_status']['guest']['height'] - message['touch_x']
-        # message['touch_y'] = GUEST['connection_status']['guest']['width'] - message['touch_y']
+        message['touch_y'] = target_size[0] - message['touch_y']
     return message
 
 
